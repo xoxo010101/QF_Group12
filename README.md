@@ -1,1 +1,1 @@
-This is the project of GROUP 12 of QF5214.
+This is QF5214 project of GROUP 12.
