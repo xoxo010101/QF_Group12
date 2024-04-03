@@ -1,0 +1,157 @@
+import xgboost as xgb
+import lightgbm as lgb
+from catboost import CatBoostClassifier
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+
+
+final_features=[f for f in train.columns if f not in [target]]
+final_features=[*set(final_features)]
+
+sc=StandardScaler()
+
+train_scaled=train.copy()
+test_scaled=test.copy()
+train_scaled[final_features]=sc.fit_transform(train[final_features])
+test_scaled[final_features]=sc.transform(test[final_features])
+
+def post_processor(train, test):
+    cols=train.drop(columns=[target]).columns
+    train_cop=train.copy()
+    test_cop=test.copy()
+    drop_cols=[]
+    for i, feature in enumerate(cols):
+        for j in range(i+1, len(cols)):
+            if sum(abs(train_cop[feature]-train_cop[cols[j]]))==0:
+                if cols[j] not in drop_cols:
+                    drop_cols.append(cols[j])
+    print(drop_cols)
+    train_cop.drop(columns=drop_cols,inplace=True)
+    test_cop.drop(columns=drop_cols,inplace=True)
+    
+    return train_cop, test_cop
+
+                    
+train_cop, test_cop=   post_processor(train_scaled, test_scaled)  
+
+X_train = train_cop.drop(columns=[target])
+y_train = train[target]
+
+X_test = test_cop.copy()
+
+print(X_train.shape, X_test.shape)
+
+def get_most_important_features(X_train, y_train, n,model_input):
+    xgb_params = {
+            'n_jobs': -1,
+            'eval_metric': 'logloss',
+            'objective': 'binary:logistic',
+            'tree_method': 'hist',
+            'verbosity': 0,
+            'random_state': 42,
+        }
+    if device == 'gpu':
+            xgb_params['tree_method'] = 'gpu_hist'
+            xgb_params['predictor'] = 'gpu_predictor'
+    lgb_params = {
+            'objective': 'binary',
+            'metric': 'logloss',
+            'boosting_type': 'gbdt',
+            'random_state': 42,
+            'device': device,
+        }
+    cb_params = {
+            'grow_policy': 'Depthwise',
+            'bootstrap_type': 'Bayesian',
+            'od_type': 'Iter',
+            'eval_metric': 'AUC',
+            'loss_function': 'Logloss',
+            'random_state': 42,
+            'task_type': device.upper(),
+        }
+    if 'xgb' in model_input:
+        model = xgb.XGBClassifier(**xgb_params)
+    elif 'cat' in model_input:
+        model=CatBoostClassifier(**cb_params)
+    else:
+        model=lgb.LGBMClassifier(**lgb_params)
+        
+    kfold = KFold(n_splits=5, shuffle=True, random_state=42)
+    auc_scores = []
+    feature_importances_list = []
+    
+    for train_idx, val_idx in kfold.split(X_train):
+        X_train_fold, X_val_fold = X_train.iloc[train_idx], X_train.iloc[val_idx]
+        y_train_fold, y_val_fold = y_train.iloc[train_idx], y_train.iloc[val_idx]
+
+        model.fit(X_train_fold, y_train_fold, verbose=False)
+        
+        y_pred = model.predict_proba(X_val_fold)[:,1]
+        auc_scores.append(roc_auc_score(y_val_fold, y_pred))
+        feature_importances = model.feature_importances_
+        feature_importances_list.append(feature_importances)
+
+    avg_auc= np.mean(auc_scores)
+    avg_feature_importances = np.mean(feature_importances_list, axis=0)
+
+    feature_importance_list = [(X_train.columns[i], importance) for i, importance in enumerate(avg_feature_importances)]
+    sorted_features = sorted(feature_importance_list, key=lambda x: x[1], reverse=True)
+    top_n_features = [feature[0] for feature in sorted_features[:n]]
+
+n_imp_features_cat=get_most_important_features(X_train.reset_index(drop=True), y_train,75, 'cat')
+n_imp_features_xgb=get_most_important_features(X_train.reset_index(drop=True), y_train,75, 'xgb')
+n_imp_features_lgbm=get_most_important_features(X_train.reset_index(drop=True), y_train,75, 'lgbm')
+
+import xgboost as xgb
+
+# 假设已经训练了模型
+model_xgb = xgb.XGBClassifier()
+model_xgb.fit(X_train, y_train)
+
+feature_importances_xgb = {feature: importance for feature, importance in zip(X_train.columns, model_xgb.feature_importances_)}
+
+import lightgbm as lgb
+
+# 假设已经训练了模型
+model_lgbm = lgb.LGBMClassifier()
+model_lgbm.fit(X_train, y_train)
+
+feature_importances_lgbm = {feature: importance for feature, importance in zip(X_train.columns, model_lgbm.feature_importances_)}
+
+from catboost import CatBoostClassifier
+
+# 假设已经训练了模型
+model_cat = CatBoostClassifier()
+model_cat.fit(X_train, y_train)
+
+feature_importances_cat = {feature: importance for feature, importance in zip(X_train.columns, model_cat.feature_importances_)}
+
+# 假设我们有每个模型对每个特征的重要性评分
+# feature_importances_xgb, feature_importances_lgbm, feature_importances_cat 是包含特征名和重要性评分的字典
+
+# 合并所有模型的特征重要性评分
+all_feature_importances = {}
+for feature, importance in feature_importances_xgb.items():
+    all_feature_importances[feature] = all_feature_importances.get(feature, 0) + importance
+
+for feature, importance in feature_importances_lgbm.items():
+    all_feature_importances[feature] = all_feature_importances.get(feature, 0) + importance
+
+for feature, importance in feature_importances_cat.items():
+    all_feature_importances[feature] = all_feature_importances.get(feature, 0) + importance
+# 计算特征的平均重要性
+for feature in all_feature_importances.keys():
+    all_feature_importances[feature] /= 3  # 假设有三个模型
+
+# 将特征重要性字典转换为可以排序的列表
+sorted_features = sorted(all_feature_importances.items(), key=lambda x: x[1], reverse=True)
+
+# 选择前N个最重要的特征
+n = 30  # 可以根据需要调整这个值
+top_n_features = [feature for feature, _ in sorted_features[:n]]
+
+print(f"{len(top_n_features)} features have been selected from three algorithms for the final model")
+print(top_n_features)
